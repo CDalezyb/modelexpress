@@ -216,13 +216,31 @@ def merge_shard_tables(tables: list) -> list:
 
 
 def wrap_rendezvous_blob(
-    agent_metadata: bytes, agent_name: str, metadata_endpoint: str, tensors: list
+    agent_metadata: bytes,
+    agent_name: str,
+    metadata_endpoint: str,
+    tensors: list,
+    publisher_step: int | None = None,
 ) -> bytes:
     """Pack ``{agent_meta, agent_name, metadata_endpoint, shard_table}`` into one
     JSON blob. ``metadata_endpoint`` (``host:listen_port`` of the trainer's NIXL
     listen thread) is what the receiver's ``fetch_remote_and_wait`` connects to
     for the P2P memory-registration handshake (the central agent-metadata blob
-    alone does not make the registrations resolvable for RDMA reads)."""
+    alone does not make the registrations resolvable for RDMA reads).
+
+    ``publisher_step`` stamps the table with the training step whose weights it
+    describes. A receiver otherwise has no way to tell a current table from one
+    published a step ago, and it needs to: the shard table carries the per-shard
+    digests a receiver verifies against, so a table one step behind makes correctly
+    delivered bytes read as corruption. Inferring freshness instead - asking whether
+    any digest changed since planning - holds only when a table is wholly stale or
+    wholly current, and breaks under partial propagation across many publishers,
+    where it reports one lagging publisher's shard as a hard defect. The stamp turns
+    that inference into an observation.
+
+    The key is omitted rather than written as null when absent, so a blob from an
+    unstamped publisher is byte-identical to one an older client would have produced.
+    """
     payload = {
         "schema": _SCHEMA,
         "agent_name": agent_name,
@@ -230,12 +248,30 @@ def wrap_rendezvous_blob(
         "agent_meta_b64": base64.b64encode(agent_metadata).decode("ascii"),
         "tensors": json.loads(encode_shard_table(tensors).decode("utf-8"))["tensors"],
     }
+    if publisher_step is not None:
+        payload["publisher_step"] = int(publisher_step)
     return json.dumps(payload).encode("utf-8")
 
 
 def unwrap_rendezvous_blob(blob: bytes) -> tuple:
     """Inverse of ``wrap_rendezvous_blob``; returns ``(agent_metadata, agent_name,
-    metadata_endpoint, tensors)``."""
+    metadata_endpoint, tensors)``.
+
+    Arity is preserved for callers that predate the step stamp; read the stamp with
+    :func:`unwrap_rendezvous_blob_with_step`.
+    """
+    return unwrap_rendezvous_blob_with_step(blob)[:4]
+
+
+def unwrap_rendezvous_blob_with_step(blob: bytes) -> tuple:
+    """As :func:`unwrap_rendezvous_blob`, plus the publisher's step stamp.
+
+    Returns ``(agent_metadata, agent_name, metadata_endpoint, tensors,
+    publisher_step)``, where ``publisher_step`` is ``None`` for a publisher that does
+    not stamp. ``None`` must be read as "unknown", never as step 0: a publisher read
+    as step 0 looks permanently behind, and a consumer that excuses lagging
+    publishers would then excuse all of its shards, going quiet instead of strict.
+    """
     payload = json.loads(blob.decode("utf-8"))
     if payload.get("schema") != _SCHEMA:
         raise ValueError(f"unexpected rendezvous blob schema {payload.get('schema')!r}")
@@ -245,7 +281,9 @@ def unwrap_rendezvous_blob(blob: bytes) -> tuple:
     tensors = decode_shard_table(
         json.dumps({"schema": _SCHEMA, "tensors": payload["tensors"]}).encode("utf-8")
     )
-    return agent_metadata, agent_name, metadata_endpoint, tensors
+    raw_step = payload.get("publisher_step")
+    publisher_step = None if raw_step is None else int(raw_step)
+    return agent_metadata, agent_name, metadata_endpoint, tensors, publisher_step
 
 
 class MxReshardRendezvous:

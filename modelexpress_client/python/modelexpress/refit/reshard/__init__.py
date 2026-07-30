@@ -51,6 +51,7 @@ from modelexpress.refit.reshard.rendezvous import (
     PublishedShard,
     PublishedTensor,
     gather_sources,
+    unwrap_rendezvous_blob_with_step,
     wrap_rendezvous_blob,
 )
 
@@ -81,5 +82,6 @@ __all__ = [
     "paired_runs",
     "plan_pull",
     "plan_transfer",
+    "unwrap_rendezvous_blob_with_step",
     "wrap_rendezvous_blob",
 ]
