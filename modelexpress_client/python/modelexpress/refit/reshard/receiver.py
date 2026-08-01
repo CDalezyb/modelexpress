@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 
 import torch
@@ -48,10 +47,6 @@ from modelexpress.refit.reshard.types import CaptureResult, UnsupportedReshard
 
 logger = logging.getLogger("modelexpress.refit.reshard.receiver")
 
-# Emit one JSON stage record per refit. On by default: the timings are already
-# computed, and at INFO they were never captured by a benchmark run.
-_STAGE_RECORD = os.environ.get("MX_REFIT_STAGE_RECORD", "1") == "1"
-
 
 def _max_gbps() -> float:
     """Per-rank fabric ceiling in Gbps; 0 disables the check.
@@ -59,10 +54,7 @@ def _max_gbps() -> float:
     Read at call time so a harness can set it per run. Off unless configured
     because only the operator knows the real per-rank limit for their fabric.
     """
-    try:
-        return float(os.environ.get("MX_RESHARD_MAX_GBPS", "0") or 0)
-    except ValueError:
-        return 0.0
+    return envs.MX_RESHARD_MAX_GBPS
 
 
 def _fused_wire_enabled() -> bool:
@@ -526,7 +518,7 @@ class ReshardReceiver:
             len(stats["fallback"]),
         )
         metrics.update({k: round(v, 6) for k, v in stages.items()})
-        if _STAGE_RECORD:
+        if envs.MX_REFIT_STAGE_RECORD:
             record = {
                 "schema": "refit-stage-v2",
                 "step": step,
