@@ -25,6 +25,7 @@ def test_defaults_when_unset(monkeypatch):
         "MX_GDS_TIMEOUT",
         "MX_HEARTBEAT_INTERVAL_SECS",
         "MX_RESHARD_FUSED_WIRE",
+        "MX_ARTIFACT_MOONCAKE_ENABLE_SOFT_PIN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -43,6 +44,7 @@ def test_defaults_when_unset(monkeypatch):
     assert envs.MX_GDS_TIMEOUT == pytest.approx(120.0)
     assert envs.MX_HEARTBEAT_INTERVAL_SECS == 30
     assert envs.MX_RESHARD_FUSED_WIRE is True
+    assert envs.MX_ARTIFACT_MOONCAKE_ENABLE_SOFT_PIN is True
 
 
 def test_int_and_float_parsing(monkeypatch):
@@ -77,6 +79,9 @@ def test_bool_parsing(monkeypatch, caplog):
 
     monkeypatch.setenv("MX_VMM_ARENA", "1")
     assert envs.MX_VMM_ARENA is True
+
+    monkeypatch.setenv("MX_ARTIFACT_MOONCAKE_ENABLE_SOFT_PIN", "0")
+    assert envs.MX_ARTIFACT_MOONCAKE_ENABLE_SOFT_PIN is False
 
     for truthy in ("1", "TRUE", "yes", "On"):
         monkeypatch.setenv("MX_ARTIFACT_TRANSFER", truthy)
