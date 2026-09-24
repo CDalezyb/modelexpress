@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+import importlib
 import json
 import logging
 import tempfile
@@ -589,7 +591,45 @@ def _triton_key() -> str:
 
 
 def _deep_gemm_jit_key() -> str:
-    return _artifact_lifecycle.deep_gemm_jit_key()
+    """Return a key for the DeepGEMM implementation selected by vLLM."""
+    try:
+        vllm_deep_gemm = importlib.import_module("vllm.utils.deep_gemm")
+        import_deep_gemm = getattr(vllm_deep_gemm, "_import_deep_gemm", None)
+        if not callable(import_deep_gemm):
+            return ""
+        module = import_deep_gemm()
+    except Exception as exc:
+        logger.warning(
+            "[MX][vLLM Artifact] Unable to resolve vLLM DeepGEMM provider: %s",
+            exc,
+        )
+        return ""
+
+    provider = getattr(module, "__name__", "")
+    if provider == "deep_gemm":
+        # This is a content fingerprint of the installed external DeepGEMM
+        # package, not its package-version string. DeepGEMM hashes its JIT
+        # headers and interleave_ffma.py. Individual kernel cache entries add
+        # generated CUDA code, NVCC version, flags, and SASS options on top of
+        # that fingerprint; those remain separated by DeepGEMM itself.
+        return _artifact_lifecycle.deep_gemm_jit_key()
+    elif provider == "vllm.third_party.deep_gemm":
+        # The vendored implementation exposes no equivalent JIT-source
+        # fingerprint, so use a conservative implementation-version proxy.
+        version = getattr(module, "__version__", "")
+        vllm_version = _vllm_version()
+        if not isinstance(version, str) or not version or not vllm_version:
+            return ""
+        payload = {
+            "provider": provider,
+            "version": version,
+            "vllm_version": vllm_version,
+        }
+        return sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    else:
+        return ""
 
 
 def _tilelang_version() -> str:

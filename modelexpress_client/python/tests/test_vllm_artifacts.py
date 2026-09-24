@@ -4,8 +4,9 @@
 """Tests for vLLM cache artifact integration."""
 
 import logging
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -226,6 +227,55 @@ def test_deep_gemm_artifact_identity_omits_jit_key_when_unavailable(monkeypatch)
     )
 
     assert "deep_gemm_jit_key" not in identity.extra_parameters
+
+
+def test_deep_gemm_jit_key_uses_vllm_selected_site_package(monkeypatch):
+    module = SimpleNamespace(__name__="deep_gemm", __version__="2.5.0")
+    vllm_deep_gemm = ModuleType("vllm.utils.deep_gemm")
+    vllm_deep_gemm._import_deep_gemm = lambda: module
+    monkeypatch.setitem(sys.modules, "vllm.utils.deep_gemm", vllm_deep_gemm)
+    monkeypatch.setattr(
+        artifact_lifecycle,
+        "deep_gemm_jit_key",
+        lambda: "site-package-jit-key",
+    )
+
+    assert artifacts._deep_gemm_jit_key() == "site-package-jit-key"
+
+
+def test_deep_gemm_jit_key_uses_vllm_selected_vendored_package(monkeypatch):
+    module = SimpleNamespace(
+        __name__="vllm.third_party.deep_gemm",
+        __version__="2.5.0",
+    )
+    vllm_deep_gemm = ModuleType("vllm.utils.deep_gemm")
+    vllm_deep_gemm._import_deep_gemm = lambda: module
+    monkeypatch.setitem(sys.modules, "vllm.utils.deep_gemm", vllm_deep_gemm)
+    monkeypatch.setattr(artifacts, "_vllm_version", lambda: "0.26.0+build-a")
+
+    def unexpected_site_package_lookup():
+        raise AssertionError("vendored provider must not query site-packages key")
+
+    monkeypatch.setattr(
+        artifact_lifecycle,
+        "deep_gemm_jit_key",
+        unexpected_site_package_lookup,
+    )
+
+    key = artifacts._deep_gemm_jit_key()
+
+    assert key
+    module.__version__ = "2.5.1"
+    assert artifacts._deep_gemm_jit_key() != key
+
+
+def test_deep_gemm_jit_key_is_empty_for_unknown_vllm_provider(monkeypatch):
+    module = SimpleNamespace(__name__="custom.deep_gemm", __version__="2.5.0")
+    vllm_deep_gemm = ModuleType("vllm.utils.deep_gemm")
+    vllm_deep_gemm._import_deep_gemm = lambda: module
+    monkeypatch.setitem(sys.modules, "vllm.utils.deep_gemm", vllm_deep_gemm)
+
+    assert artifacts._deep_gemm_jit_key() == ""
 
 
 def test_tilelang_artifact_identity_uses_tilelang_cache_criteria(monkeypatch):
